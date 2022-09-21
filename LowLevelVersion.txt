@@ -1,0 +1,339 @@
+﻿using EasyHook;
+using System;
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Timers;
+using System.Windows.Forms;
+using Timer = System.Timers.Timer;
+
+namespace exptcp
+{
+
+    [Guid("C8B20E71-070B-4D76-AAF2-D590E25A20FE")]
+    public interface IExpTcp
+    {
+
+        bool StartTCPListener(string uid, int port, out string errorMessage);
+        void StopTCPListener();
+        bool SendMessage(string ip, int port, string message, out string errorMessage);
+        void StartTimer(int delay);
+        void StopTimer();
+        void EnableHook(string uid);
+        void DisableHook();
+
+    }
+
+    [Guid("3F258E4C-7C3E-4917-AA78-1C292034FE08")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
+    public interface IExpTcpEvent
+    {
+        [DispId(1)]
+        void OnDataReceived(string uid, string message);
+
+        [DispId(2)]
+        void OnTimerElapsed(DateTime time);
+
+        [DispId(3)]
+        void OnGetClipboard(string uid, string fileName, string filePath);
+    }
+
+    [Guid("08567C2D-CE17-4E8B-8B9F-F53A4B09CBE5")]
+    [ClassInterface(ClassInterfaceType.None)]
+    [ComSourceInterfaces(typeof(IExpTcpEvent))]
+    [ProgId("1C.Extension")]
+    public class ExpTcp : IExpTcp
+    {
+
+        public delegate void DataReceivedEvent(string uid, string message);
+        public event DataReceivedEvent OnDataReceived;
+
+        public delegate void TimerElapsedEvent(DateTime time);
+        public event TimerElapsedEvent OnTimerElapsed;
+
+        public delegate void GetClipboardEvent(string uid, string fileName, string filePath);
+        public event GetClipboardEvent OnGetClipboard;
+
+        private Timer timer;
+        private TcpListener listener;
+
+        private LocalHook hook;
+        private bool hookEnabled;
+
+        private string formUID;
+        private string formUIDListener;
+
+        //private string messageToReceive;
+        //private int messageSize;
+
+        private const int sizeLength = 16;
+
+        public void StartTimer(int delay)
+        {
+            timer = new Timer(delay);
+            timer.Elapsed += Timer_Elapsed;
+            timer.Start();
+        }
+
+        public void StopTimer()
+        {
+            try
+            {
+                timer?.Stop();
+                timer?.Dispose();
+            }
+            catch { };
+        }
+
+        private void Timer_Elapsed(object sender, ElapsedEventArgs e)
+        {
+            OnTimerElapsed?.Invoke(e.SignalTime);
+        }
+
+        public bool StartTCPListener(string uid, int port, out string errorMessage)
+        {
+
+            errorMessage = "";
+            formUIDListener = uid;
+
+            try
+            {
+
+                listener = new TcpListener(IPAddress.Any, port);
+                listener.Start();
+
+                Accept();
+
+            }
+            catch (Exception ex)
+            {
+                errorMessage = ex.ToString();
+                return false;
+            }
+
+            return true;
+
+        }
+
+        public void StopTCPListener()
+        {
+            try
+            {
+                listener?.Stop();
+            }
+            catch { };
+        }
+
+        async private void Accept()
+        {
+            try
+            {
+                using TcpClient client = await listener.AcceptTcpClientAsync();
+                using NetworkStream stream = client.GetStream();
+
+                //byte[] buffer = new byte[sizeLength];
+                //if (messageSize == 0)
+                //{
+                //    await stream.ReadAsync(buffer, 0, buffer.Length);
+                //    messageSize = int.Parse(Encoding.UTF8.GetString(buffer), System.Globalization.NumberStyles.HexNumber);
+                //}
+
+                //client.ReceiveBufferSize = messageSize;
+                //buffer = new byte[messageSize];
+
+                //int offset = 0;
+                //int index = offset;
+                //do
+                //{
+                //    offset = await stream.ReadAsync(buffer, offset, buffer.Length - offset);
+                //    messageToReceive += Encoding.UTF8.GetString(buffer, index, offset);
+
+                //    messageSize -= offset;
+                //    if (timeout > 0)
+                //        Thread.Sleep(timeout);
+                //    if (index < buffer.Length)
+                //        index += offset;
+                //    else
+                //    {
+                //        offset = 0;
+                //        index = offset;
+                //    }
+                //}
+                //while (stream.DataAvailable);
+
+                using BinaryReader br = new(stream);
+                OnDataReceived?.Invoke(formUIDListener, br.ReadString());
+                br.Close();
+
+                //InvokeTCPEvent();
+
+                stream.Close();
+                client.Close();
+                GC.Collect();
+            }
+            catch { };
+            Accept();
+        }
+
+        //private void InvokeTCPEvent()
+        //{
+        //    if (messageSize <= 0)
+        //    {
+        //        if (messageToReceive.Length > 0)
+        //            OnDataReceived?.Invoke(formUIDListener, messageToReceive);
+        //        messageSize = 0;
+        //        messageToReceive = "";
+        //        GC.Collect();
+        //    }
+        //}
+
+        public bool SendMessage(string ip, int port, string message, out string errorMessage)
+        {
+
+            errorMessage = "";
+
+            try
+            {
+                SendMessageAsync(ip, port, message);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                errorMessage = ex.ToString();
+                return false;
+            }
+
+        }
+
+        //private Task<byte[]> GetBufferToSend(string message)
+        //{
+        //    Task<byte[]> task = new(() =>
+        //    {
+        //        byte[] buffer = Encoding.UTF8.GetBytes(message);
+        //        message = buffer.Length.ToString("x16") + message;
+        //        return Encoding.UTF8.GetBytes(message);
+        //    });
+        //    task.Start();
+        //    return task;
+        //}
+
+        async private void SendMessageAsync(string ip, int port, string message)
+        {
+            using TcpClient client = new();
+            await client.ConnectAsync(ip, port);
+
+            using NetworkStream stream = client.GetStream();
+            //byte[] buffer = await GetBufferToSend(message);
+            //client.SendBufferSize = buffer.Length;
+
+            //await stream.WriteAsync(buffer, 0, buffer.Length);
+
+            using BinaryWriter bw = new(stream);
+            bw.Write(message);
+
+            bw.Close();
+            //if (pause <= 0)
+                stream.Close();
+            //else
+            //    stream.Close(pause);
+            client.Close();
+            GC.Collect();
+        }
+
+        public void EnableHook(string uid)
+        {
+            hookEnabled = true;
+            formUID = uid;
+            hook.ThreadACL.SetExclusiveACL(new Int32[] { });
+        }
+
+        public void DisableHook()
+        {
+            hookEnabled = false;
+            hook.ThreadACL.SetInclusiveACL(new Int32[] { });
+        }
+
+        private void RunHook()
+        {
+            try
+            {
+
+                hook = LocalHook.Create(EasyHook.LocalHook.GetProcAddress("ole32.dll", "OleGetClipboard"),
+                            new NativeMethods.GetClipboardDelegate(GetClipboardHook), null);
+            }
+            catch
+            {
+            }
+        }
+
+        private long GetClipboardHook(out NativeMethods.IDataObject pDataObj)
+        {
+            try
+            {
+                long res = NativeMethods.OleGetClipboard(out pDataObj);
+
+                if (hookEnabled && (DataObjectHelper.GetDataPresent(pDataObj, "FileGroupDescriptorW") || DataObjectHelper.GetDataPresent(pDataObj, "FileGroupDescriptor")))
+                {
+                    string[] fileNames = DataObjectHelper.GetFilenames(pDataObj);
+
+                    string tempPath = Path.GetTempPath() + "1CExtension\\";
+                    if (!Directory.Exists(tempPath))
+                        Directory.CreateDirectory(tempPath);
+
+                    for (int i = 0; i < fileNames.Length; i++)
+                    {
+                        using FileStream stream = new(tempPath + fileNames[i], FileMode.Create);
+                        DataObjectHelper.ReadFileContents(pDataObj, i, stream);
+
+                        long streamLength = stream.Length;
+                        stream.Close();
+
+                        if (streamLength > 0)
+                            OnGetClipboard?.Invoke(formUID, fileNames[i], stream.Name);
+                    }
+
+                    Clipboard.Clear();
+                }
+
+                return res;
+            }
+            catch
+            {
+                pDataObj = null;
+                return 1;
+            }
+        }
+
+
+        public ExpTcp()
+        {
+            //messageSize = 0;
+            //messageToReceive = "";
+
+            hookEnabled = false;
+            RunHook();
+        }
+
+        ~ExpTcp()
+        {
+            try
+            {
+                StopTCPListener();
+                StopTimer();
+
+                if (hook != null)
+                {
+                    hook.ThreadACL.SetInclusiveACL(new Int32[] { });
+                    hook.Dispose();
+                };
+                LocalHook.Release();
+            }
+            catch { };
+        }
+
+    }
+}
